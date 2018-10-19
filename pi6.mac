@@ -1,0 +1,427 @@
+	TITLE	PI6
+	SUBTTL	Written by Matjaz Rihtar, (C) 1987
+;
+;Program calculates number PI to N decimal places.
+;	PI = 16*arctg(1/5) - 4*arctg(1/239)
+	
+	SEARCH UUOSYM,JOBDAT
+;
+	TWOSEG	776000		;Two segment program
+	RELOC	0		;Low segment
+	RELOC			;Back to the high segment
+
+N=^D48010	;Length of array (= number of decimal places + 10)
+		;MAX = 16010 (252(1)+1P, HiSeg:400000, 8 arrays)
+		;MAX = 32510 (510(1)+1P, HiSeg:777000, 8 arrays)
+		;MAX = 37010 (508(1)+1P, HiSeg:777000, 7 arrays)
+		;MAX = 52010 (511(1)+1P, HiSeg:777000, 5 arrays)
+		;MAX = 65010 (510(1)+1P, HiSeg:777000, 4 arrays)
+		;MAX = 65010 (510(1)+1P, HiSeg:776000, 4 arrays, SAVE.)
+		;MAX = 48010 (377+1P, HiSeg: 776000, 4 arrays, SAVE.)
+SINC=^D500	;Increment of I between SAVEs (1 cycle = 1.2 s)
+NV=^D50		;Number of decimals in a row
+NC=^D5		;Number of decimals in a column
+;-----------------------------------------------------------
+;Accumulators
+T0==0		;Special temporary AC
+T1==1		;Temporaries
+T2==2
+T3==3
+T4==4
+
+P1==5		;Preserved ACs for calling routines
+P2==6
+P3==7
+P4==10
+
+F==11		;Local flags,,global flags
+P==17		;Push-down pointer
+
+I==12		;Loop counter in ARCTG
+J==13		;Temp. loop counter
+REM==14		;Remainder (REM+1==15)
+
+;Channels
+DSK=1		;Disk
+;-----------------------------------------------------------
+DEFINE	MOV$	(arr1,arr2) <
+	MOVE	T1,[XWD  arr2,arr1]
+	BLT	T1,arr1+N+1-1
+>
+DEFINE	ZER$	(arr) <
+	SETZM	arr
+	MOVE	T1,[XWD  arr,arr+1]
+	BLT	T1,arr+N+1-1
+>
+;-----------------------------------------------------------
+START:	RESET
+	MOVE	P,[IOWD  20,STACK]
+;detach
+;	HRLZI	T1,-1
+;	ATTACH	T1,
+;	 HALT
+;arctg(5,st1);
+;----------------------------------------------------------- Arctg 1
+;st2:= 0;
+	ZER$	xST2
+;st2[0]:= 1;
+	MOVEI	T1,1
+	MOVEM	T1,xST2
+;divide(st2,a,st2);
+	SETZ	REM,
+	SETZ	J,
+DEL.11:	IMULI	REM,^D10
+	ADD	REM,xST2(J)
+	IDIVI	REM,^D5		;a = 5
+	MOVEM	REM,xST2(J)
+;res:= st2;
+	MOVEM	REM,ST1(J)	;res = st1
+	MOVE	REM,REM+1
+	AOJ	J,
+	CAIG	J,N
+	 JRST	DEL.11
+;
+	MOVEI	I,1
+ARC.10:	ADDI	I,2
+;divide(st2,a**2,st2);
+	SETZ	REM,
+	SETZ	J,
+DEL.12:	IMULI	REM,^D10
+	ADD	REM,xST2(J)
+	IDIVI	REM,^D25	;a**2 = 25
+	MOVEM	REM,xST2(J)
+	MOVE	REM,REM+1
+	AOJ	J,
+	CAIG	J,N
+	 JRST	DEL.12
+;divide(st2,I,st1);
+	SETZ	REM,
+	SETZ	J,
+DEL.13:	IMULI	REM,^D10
+	ADD	REM,xST2(J)
+	IDIV	REM,I
+	MOVEM	REM,xST1(J)
+	MOVE	REM,REM+1
+	AOJ	J,
+	CAIG	J,N
+	 JRST	DEL.13
+;if odd((I - 1) div 2)
+	TRNN	I,2
+	 JRST	ARC.11
+;then subtract(res,st1,res)
+	SETZ	REM,
+	MOVEI	J,N
+ODS.11:	ADD	REM,xST1(J)
+	CAMG	REM,ST1(J)	;res = st1
+	 JRST	OD.111
+	MOVNS	REM
+	ADDI	REM,^D10
+	ADDM	REM,ST1(J)	;res = st1
+	MOVEI	REM,1
+	SOJGE	J,ODS.11
+	JRST	ARC.12
+OD.111:	MOVNS	REM
+	ADDM	REM,ST1(J)	;res = st1
+	SETZ	REM,
+	SOJGE	J,ODS.11
+	JRST	ARC.12
+;else add(res,st1,res);
+ARC.11:	SETZ	REM,
+	MOVEI	J,N
+SES.11:	ADD	REM,ST1(J)	;res = st1
+	ADD	REM,xST1(J)
+	IDIVI	REM,^D10
+	MOVEM	REM+1,ST1(J)	;res = st1
+	SOJGE	J,SES.11
+;until equalzero(st1);
+ARC.12:
+;if (I mod sinc) = 1 then save('DSK:PISAV.EXE');
+	MOVE	T1,I
+	IDIVI	T1,SINC
+	CAIE	T2,1
+	 JRST	ARC.13
+	MOVEM	I,ISAV
+	MOVEM	P,PSAV
+	MOVEI	T1,CON.10
+	HRRM	T1,.JBSA
+	MOVE	T1,[XWD  0,SAVBLK]
+	SAVE.	T1,
+	 JFCL
+	JRST	CON.11
+CON.10:;HRLZI	T1,-1
+;	ATTACH	T1,
+;	 HALT
+CON.11:	MOVE	P,PSAV
+	MOVE	I,ISAV
+;
+ARC.13:	MOVEI	J,N
+ARC.14:	SKIPE	xST1(J)
+	 JRST	ARC.10
+	SOJGE	J,ARC.14
+;save('DSK:PISAV.EXE');
+	MOVEM	P,PSAV
+	MOVEI	T1,CON.20
+	HRRM	T1,.JBSA
+	MOVE	T1,[XWD  0,SAVBLK]
+	SAVE.	T1,
+	 JFCL
+	JRST	CON.21
+CON.20:;HRLZI	T1,-1
+;	ATTACH	T1,
+;	 HALT
+CON.21:	MOVE	P,PSAV
+;-----------------------------------------------------------
+;arctg(239,st2);
+;----------------------------------------------------------- Arctg 2
+;st2:= 0;
+	ZER$	xST2
+;st2[0]:= 1;
+	MOVEI	T1,1
+	MOVEM	T1,xST2
+;divide(st2,a,st2);
+	SETZ	REM,
+	SETZ	J,
+DEL.21:	IMULI	REM,^D10
+	ADD	REM,xST2(J)
+	IDIVI	REM,^D239	;a = 239
+	MOVEM	REM,xST2(J)
+;res:= st2;
+	MOVEM	REM,ST2(J)	;res = st2
+	MOVE	REM,REM+1
+	AOJ	J,
+	CAIG	J,N
+	 JRST	DEL.21
+;
+	MOVEI	I,1
+ARC.20:	ADDI	I,2
+;divide(st2,a**2,st2);
+	SETZ	REM,
+	SETZ	J,
+DEL.22:	IMULI	REM,^D10
+	ADD	REM,xST2(J)
+	IDIVI	REM,^D57121	;a**2 = 57121
+	MOVEM	REM,xST2(J)
+	MOVE	REM,REM+1
+	AOJ	J,
+	CAIG	J,N
+	 JRST	DEL.22
+;divide(st2,I,st1);
+	SETZ	REM,
+	SETZ	J,
+DEL.23:	IMULI	REM,^D10
+	ADD	REM,xST2(J)
+	IDIV	REM,I
+	MOVEM	REM,xST1(J)
+	MOVE	REM,REM+1
+	AOJ	J,
+	CAIG	J,N
+	 JRST	DEL.23
+;if odd((I - 1) div 2)
+	TRNN	I,2
+	 JRST	ARC.21
+;then subtract(res,st1,res);
+	SETZ	REM,
+	MOVEI	J,N
+ODS.21:	ADD	REM,xST1(J)
+	CAMG	REM,ST2(J)	;res = st2
+	 JRST	OD.211
+	MOVNS	REM
+	ADDI	REM,^D10
+	ADDM	REM,ST2(J)	;res = st2
+	MOVEI	REM,1
+	SOJGE	J,ODS.21
+	JRST	ARC.22
+OD.211:	MOVNS	REM
+	ADDM	REM,ST2(J)	;res = st2
+	SETZ	REM,
+	SOJGE	J,ODS.21
+	JRST	ARC.22
+;else add(res,st1,res);
+ARC.21:	SETZ	REM,
+	MOVEI	J,N
+SES.21:	ADD	REM,ST2(J)	;res = st2
+	ADD	REM,xST1(J)
+	IDIVI	REM,^D10
+	MOVEM	REM+1,ST2(J)	;res = st2
+	SOJGE	J,SES.21
+;until equalzero(st1);
+ARC.22:
+;if (I mod sinc) = 1 then save('DSK:PISAV.EXE');
+	MOVE	T1,I
+	IDIVI	T1,SINC
+	CAIE	T2,1
+	 JRST	ARC.23
+	MOVEM	I,ISAV
+	MOVEM	P,PSAV
+	MOVEI	T1,CON.30
+	HRRM	T1,.JBSA
+	MOVE	T1,[XWD  0,SAVBLK]
+	SAVE.	T1,
+	 JFCL
+	JRST	CON.31
+CON.30:;HRLZI	T1,-1
+;	ATTACH	T1,
+;	 HALT
+CON.31:	MOVE	P,PSAV
+	MOVE	I,ISAV
+;
+ARC.23:	MOVEI	J,N
+ARC.24:	SKIPE	xST1(J)
+	 JRST	ARC.20
+	SOJGE	J,ARC.24
+;save('DSK:PISAV.EXE');
+	MOVEM	P,PSAV
+	MOVEI	T1,CON.40
+	HRRM	T1,.JBSA
+	MOVE	T1,[XWD  0,SAVBLK]
+	SAVE.	T1,
+	 JFCL
+	JRST	CON.41
+CON.40:;HRLZI	T1,-1
+;	ATTACH	T1,
+;	 HALT
+CON.41:	MOVE P,PSAV
+;-----------------------------------------------------------
+;multiply(st1,16,st1);
+	SETZ	REM,
+	MOVEI	J,N
+ZMN.11:	MOVEI	T2,^D16
+	IMUL	T2,ST1(J)
+	ADD	REM,T2
+	IDIVI	REM,^D10
+	MOVEM	REM+1,ST1(J)
+	SOJGE	J,ZMN.11
+;multiply(st2,4,st2);
+	SETZ	REM,
+	MOVEI	J,N
+ZMN.12:	MOVEI	T2,^D4
+	IMUL	T2,ST2(J)
+	ADD	REM,T2
+	IDIVI	REM,^D10
+	MOVEM	REM+1,ST2(J)
+	SOJGE	J,ZMN.12
+;subtract(st1,st2,st1);
+	SETZ	REM,
+	MOVEI	J,N
+ODS.31:	ADD	REM,ST2(J)
+	CAMG	REM,ST1(J)
+	 JRST	OD.311
+	MOVNS	REM
+	ADDI	REM,^D10
+	ADDM	REM,ST1(J)
+;	MOVEM	REM,ST1(J)
+	MOVEI	REM,1
+	SOJGE	J,ODS.31
+	JRST	PI.1
+OD.311:	MOVNS	REM
+	ADDM	REM,ST1(J)
+;	MOVEM	REM,ST1(J)
+	SETZ	REM,
+	SOJGE	J,ODS.31
+;save('DSK:PISAV.EXE');
+PI.1:	MOVEM	P,PSAV
+	MOVEI	T1,CON.50
+	HRRM	T1,.JBSA
+	MOVE	T1,[XWD  0,SAVBLK]
+	SAVE.	T1,
+	 JFCL
+CON.50:	MOVE	P,PSAV
+;append(out,'DSK:PI.DAT');
+	SETZM	LKPBLK+3
+	MOVE	T1,[XWD  APPLEN,APPBLK]
+	FILOP.	T1,
+	 HALT
+;writeout(st1);
+	MOVEI	T1,ST1
+	PUSHJ	P,WRITE
+	EXIT
+;----------------------------------------------------------- Write
+;T1 = P1 = address of array
+WRITE:	MOVE	P1,T1
+	MOVE	T1,@P1		;first element
+	ADDI	T1,60
+	PUSHJ	P,PUT
+	MOVEI	T1,56		;"."
+	PUSHJ	P,PUT
+	MOVEI	J,1
+WR.0:	CAIG	J,1
+	 JRST	WR.1
+	MOVE	T1,J
+	IDIVI	T1,NV
+	CAIN	T2,1
+	 JRST	[MOVEI  T1,15	;<CR>
+		 PUSHJ  P,PUT
+		 MOVEI  T1,12	;<LF>
+		 PUSHJ  P,PUT
+		 MOVEI  T1,40	;" "
+		 PUSHJ  P,PUT
+		 JRST   .+1]
+	MOVE	T1,J
+	IDIVI	T1,NC
+	CAIN	T2,1
+	 JRST	[MOVEI  T1,40	;" "
+		 PUSHJ  P,PUT
+		 JRST   .+1]
+;****	MOVE	T1,@P1(J)
+WR.1:	MOVE	T2,P1
+	ADD	T2,J
+	MOVE	T1,@T2
+	ADDI	T1,60
+	PUSHJ	P,PUT
+	AOJ	J,
+	CAIG	J,N-^D10
+	 JRST	WR.0
+;
+	MOVEI	T1,15		;<CR>
+	PUSHJ	P,PUT
+	MOVEI	T1,12		;<LF>
+	PUSHJ	P,PUT
+;
+	POPJ	P,
+;----------------------------------------------------------- Put
+PUT:	SOSGE	FOCNT
+	 JRST	PUT.1
+	IDPB	T1,FOPTR
+	POPJ	P,
+PUT.1:	OUT	DSK,
+	 JRST	PUT
+	STATZ	DSK,IO.ERR	;Any errors?
+	 HALT
+	JRST	PUT
+;----------------------------------------------------------- Data area
+	RELOC	;to the low segment
+
+STACK:	BLOCK	20
+PSAV:	BLOCK	1
+ISAV:	BLOCK	1
+;----------------------------------------------------------- Arrays
+xST1:	BLOCK	N+1
+xST2:	BLOCK	N+1
+ST1:	BLOCK	N+1
+ST2:	BLOCK	N+1
+;----------------------------------------------------------- SAVE. data
+SAVBLK:	SIXBIT	\DSK\
+	SIXBIT	\PISAV\
+	EXP	0,0,0,0
+;----------------------------------------------------------- FILOP. data
+APPBLK:	XWD	DSK,.FOAPP	;[flags & channel,,function code]
+	EXP	.IOASC		;I/O mode
+	SIXBIT	\DSK\		;device name or UDX
+	XWD	FOHDR,0		;[output,,input] buffer header
+	XWD	0,0		;number of [output,,input] buffers
+	XWD	0,LKPBLK	;ptr. to [RENAME,,LOOKUP/ENTER] block
+;	XWD	0,0		;[length,,ptr. to] PATH block
+;	XWD	0,0		;[project,,programmer] number
+;	XWD	0,0		;[length,,ptr. to] filespec block
+	APPLEN==.-APPBLK
+LKPBLK:	SIXBIT	\PI\
+	SIXBIT	\DAT\
+	EXP	0		;<protection>b8
+	XWD	0,0		;PPN or PATH pointer
+FOHDR:	BLOCK	1		;OHDR
+FOPTR:	BLOCK	1		;OPTR
+FOCNT:	BLOCK	1		;OCNT
+
+	RELOC	;to the high segment
+;-----------------------------------------------------------
+	END	START
